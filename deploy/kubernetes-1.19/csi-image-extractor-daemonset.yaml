@@ -1,0 +1,81 @@
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: csi-image-extractor-plugin
+spec:
+  selector:
+    matchLabels:
+      app: csi-image-extractor-plugin
+  template:
+    metadata:
+      labels:
+        app: csi-image-extractor-plugin
+    spec:
+      hostNetwork: true
+      containers:
+        - name: node-driver-registrar
+          image: quay.io/k8scsi/csi-node-driver-registrar:v1.1.0
+          imagePullPolicy: IfNotPresent
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "rm -rf /registration/csi-image-extractor /registration/csi-image-extractor-reg.sock"]
+          args:
+            - --v=5
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/csi-image-extractor/csi.sock
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+          volumeMounts:
+          - mountPath: /csi
+            name: socket-dir
+          - mountPath: /registration
+            name: registration-dir
+
+        - name: image
+          image: keppel.eu-nl-1.cloud.sap/cnmp/image-extractor-plugin:canary
+          args:
+            - "--v=5"
+            - "--endpoint=$(CSI_ENDPOINT)"
+            - "--nodeid=$(KUBE_NODE_NAME)"
+          env:
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /csi
+              name: socket-dir
+            - mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+              name: mountpoint-dir
+            - mountPath: /image-storage
+              name: image-storage
+
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/csi-image-extractor
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: Directory
+        - name: mountpoint-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: DirectoryOrCreate
+        - name: image-storage
+          persistentVolumeClaim:
+            claimName: csi-image-extractor
+

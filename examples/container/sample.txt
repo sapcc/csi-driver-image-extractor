@@ -1,0 +1,1 @@
+This represents any bigger file which should be transported in a container image
