@@ -17,14 +17,10 @@ limitations under the License.
 package image
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
+	"path"
 	"time"
 
 	"github.com/golang/glog"
@@ -41,7 +37,15 @@ import (
 
 const (
 	deviceID   = "deviceID"
-	imageStore = "/image-storage"
+	imageStore = "/image-storage" // TODO make this configurable
+)
+
+var (
+	progressDir     = path.Join(imageStore, "inprogress")
+	requestDir      = path.Join(imageStore, "request")
+	copyDir         = path.Join(imageStore, "copy")
+	extractDir      = path.Join(imageStore, "extract")
+	maxPullDuration = 3 * time.Hour
 )
 
 type nodeServer struct {
@@ -63,8 +67,9 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	}
 
 	image := req.GetVolumeContext()["image"]
+	containerImage := NewContainerImage(image)
 
-	err := ns.setupVolume(req.GetVolumeId(), image)
+	err := ns.setupVolume(req.GetVolumeId(), containerImage)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +111,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		options = append(options, "ro")
 	}
 
-	path := fmt.Sprintf("%s/%s/extracted", imageStore, image)
+	path := containerImage.getExtractDestination()
 	mounter := mount.New("")
 	if err := mounter.Mount(path, targetPath, "", options); err != nil {
 		return nil, err
@@ -147,74 +152,78 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-func (ns *nodeServer) extractImage(image string) {
-	destinationFolder := fmt.Sprintf("%s/%s", imageStore, image)
-	if err := os.MkdirAll(destinationFolder, os.ModePerm); err != nil {
-		glog.V(4).Infof("creating dir %s failed %s\n", destinationFolder, err.Error())
+func (ns *nodeServer) extractImage(image *ContainerImage) {
+	if err := os.MkdirAll(progressDir, os.ModePerm); err != nil {
+		glog.V(4).Infof("creating dir %s failed %s\n", progressDir, err.Error())
+		return
+	}
+	// Ensure that image is only processed once
+	touchFile(image.getLockFileName(), false)
+
+	copyDir := image.getCopyDestination()
+	if err := os.MkdirAll(copyDir, os.ModePerm); err != nil {
+		glog.V(4).Infof("creating dir %s failed %s\n", copyDir, err.Error())
 		return
 	}
 
-	lockFile := fmt.Sprintf("%s/%s.inprogress", imageStore, strings.ReplaceAll(image, "/", "_"))
-	file, err := os.Create(lockFile)
-	if err != nil {
-		glog.V(4).Infof("Lockfile creation %s failed %s\n", lockFile, err.Error())
-	}
-	defer file.Close()
-
-	glog.V(4).Infof("Copy %s to %s\n", image, destinationFolder)
-	source := fmt.Sprintf("docker://%s", image)
-	destination := fmt.Sprintf("dir:%s", destinationFolder)
+	glog.V(4).Infof("Copy %s to %s\n", image.Name, copyDir)
+	source := fmt.Sprintf("docker://%s", image.Name)
+	destination := fmt.Sprintf("dir:%s", copyDir)
 	args := []string{"copy", source, destination}
+	// TODO Check whether we can use github.com/containers/image/v5 for that
 	ns.execPath = "/bin/skopeo" // FIXME
-	_, err = ns.runCmd(args)
+	_, err := ns.runCmd(args)
 	if err != nil {
-		glog.V(4).Infof("copy image %s failed %s\n", image, err.Error())
+		glog.V(4).Infof("copy image %s failed %s\n", image.Name, err.Error())
 		return
 	}
 
-	extractFolder := fmt.Sprintf("%s/extracted", destinationFolder)
-	glog.V(4).Infof("Extract %s to %s\n", image, extractFolder)
-	if err := os.MkdirAll(extractFolder, os.ModePerm); err != nil {
-		glog.V(4).Infof("creating dir %s failed %s\n", extractFolder, err.Error())
+	extractDir := image.getExtractDestination()
+	glog.V(4).Infof("Extract %s to %s\n", image.Name, extractDir)
+	if err := os.MkdirAll(extractDir, os.ModePerm); err != nil {
+		glog.V(4).Infof("creating dir %s failed %s\n", extractDir, err.Error())
 		return
 	}
 
-	manifestFile, err := os.ReadFile(fmt.Sprintf("%s/manifest.json", destinationFolder))
+	manifestFile, err := os.ReadFile(path.Join(copyDir, "manifest.json"))
 	if err != nil {
-		glog.V(4).Infof("reading file %s failed %s\n", fmt.Sprintf("%s/manifest.json", destinationFolder), err.Error())
+		glog.V(4).Infof("reading file %s failed %s\n", path.Join(copyDir, "manifest.json", copyDir), err.Error())
 		return
 	}
 	manifest, err := manifest.FromBlob(manifestFile, manifest.GuessMIMEType(manifestFile))
 	if err != nil {
-		glog.V(4).Infof("reading manifest %s failed %s\n", fmt.Sprintf("%s/manifest.json", destinationFolder), err.Error())
+		glog.V(4).Infof("reading manifest %s failed %s\n", path.Join(copyDir, "manifest.json", copyDir), err.Error())
 		return
 	}
 	for _, layer := range manifest.LayerInfos() {
 		glog.V(4).Infof("extracting layer %s\n", layer.Digest)
-		err = ns.extractTarGz(fmt.Sprintf("%s/%s", destinationFolder, layer.Digest.Encoded()), extractFolder)
+		err = extractTarGz(path.Join(copyDir, layer.Digest.Encoded()), extractDir)
 		if err != nil {
 			glog.V(4).Infof("extracting layer %s failed %s\n", layer.Digest.Encoded(), err.Error())
 			return
 		}
 
 	}
-	os.Remove(lockFile)
+
+	glog.V(4).Infof(" %s ready for consumption\n", image.Name)
+	os.Remove(image.getLockFileName())
 }
 
-func (ns *nodeServer) setupVolume(volumeId string, image string) error {
-	// TODO document last pull with touch /image-store/lastpulls/imagename:tag
+func (ns *nodeServer) setupVolume(volumeId string, image *ContainerImage) error {
 	if _, err := os.Stat(imageStore); !os.IsNotExist(err) {
-		destinationFolder := fmt.Sprintf("%s/%s", imageStore, image)
-		if _, err := os.Stat(fmt.Sprintf("%s/%s.inprogress", imageStore, strings.ReplaceAll(image, "/", "_"))); !os.IsNotExist(err) {
-			msg := fmt.Sprintf("image %s is currently being extracted to %s", image, destinationFolder)
+		image.recordImageRequest()
+		if isPullInProgress, since := image.isPullInProgress(); isPullInProgress {
+			msg := fmt.Sprintf("image %s is beeing processed since %s", image.Name, since.Format(time.RFC3339Nano))
 			glog.V(4).Infof("%s\n", msg)
+			if time.Since(since) > maxPullDuration {
+				image.cleanup()
+			}
 			return fmt.Errorf("%s", msg)
-			// TODO handle 3 hour timeout
-		} else if _, err := os.Stat(fmt.Sprintf("%s/extracted", destinationFolder)); os.IsNotExist(err) {
+		} else if !image.isExtracted() {
 			go ns.extractImage(image)
-			return fmt.Errorf("image %s pull in progress", image)
+			return fmt.Errorf("image pull %s started", image.Name)
 		} else {
-			glog.V(4).Infof("image %s already pulled\n", image)
+			glog.V(4).Infof("image %s already pulled\n", image.Name)
 			return nil
 		}
 	} else {
@@ -241,48 +250,4 @@ func (ns *nodeServer) runCmd(args []string) ([]byte, error) {
 	cmd := exec.Command(execPath, args...)
 
 	return cmd.CombinedOutput()
-}
-
-func (ns *nodeServer) extractTarGz(tarball, target string) error {
-	reader, err := os.Open(tarball)
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-
-	uncompressedStream, err := gzip.NewReader(reader)
-	if err != nil {
-		return err
-	}
-	defer uncompressedStream.Close()
-
-	tarReader := tar.NewReader(uncompressedStream)
-	for {
-		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return err
-		}
-
-		path := filepath.Join(target, header.Name)
-		info := header.FileInfo()
-		if info.IsDir() {
-			if err = os.MkdirAll(path, info.Mode()); err != nil {
-				return err
-			}
-			continue
-		}
-
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		_, err = io.Copy(file, tarReader)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
