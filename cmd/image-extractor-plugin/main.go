@@ -18,29 +18,41 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 
 	"github.com/sapcc/csi-driver-image-extractor/pkg/image"
+)
+
+var (
+	// Set by the build process
+	version = ""
 )
 
 func init() {
 	flag.Set("logtostderr", "true")
 }
 
-var (
-	endpoint   = flag.String("endpoint", "unix://tmp/csi.sock", "CSI endpoint")
-	driverName = flag.String("drivername", "image.csi.cnmp.sap", "name of the driver")
-	nodeID     = flag.String("nodeid", "", "node id")
-)
-
 func main() {
+	cfg := image.Config{
+		VendorVersion: version,
+	}
+
+	flag.StringVar(&cfg.Endpoint, "endpoint", "unix://tmp/csi.sock", "CSI endpoint")
+	flag.StringVar(&cfg.DriverName, "drivername", "image.csi.cnmp.sap", "name of the driver")
+	flag.StringVar(&cfg.NodeID, "nodeid", "", "node id")
+
 	flag.Parse()
 
-	handle()
-	os.Exit(0)
-}
+	driver, err := image.NewImageExtractor(cfg)
+	if err != nil {
+		fmt.Printf("Failed to initialize driver: %s", err.Error())
+		os.Exit(1)
+	}
 
-func handle() {
-	driver := image.NewDriver(*driverName, *nodeID, *endpoint)
-	driver.Run()
+	if err := driver.Run(); err != nil {
+		fmt.Printf("Failed to run driver: %s", err.Error())
+		os.Exit(1)
+
+	}
 }
