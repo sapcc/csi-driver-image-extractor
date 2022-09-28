@@ -16,6 +16,10 @@ package image
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path"
+	"time"
 
 	"github.com/golang/glog"
 )
@@ -25,11 +29,20 @@ type ImageExtractor struct {
 }
 
 type Config struct {
-	DriverName    string
-	Endpoint      string
-	NodeID        string
-	VendorVersion string
+	DriverName         string
+	Endpoint           string
+	NodeID             string
+	VendorVersion      string
+	ImageStoreDir      string
+	MaxPublishDuration time.Duration
 }
+
+var (
+	progressDir string
+	requestDir  string
+	copyDir     string
+	extractDir  string
+)
 
 func NewImageExtractor(cfg Config) (*ImageExtractor, error) {
 	if cfg.DriverName == "" {
@@ -44,8 +57,40 @@ func NewImageExtractor(cfg Config) (*ImageExtractor, error) {
 		return nil, errors.New("no node id provided")
 	}
 
+	if cfg.ImageStoreDir == "" {
+		return nil, errors.New("no image store dir provided")
+	}
+
+	if cfg.MaxPublishDuration == 0 {
+		return nil, errors.New("no max publish duration provided")
+	}
+
+	if _, err := os.Stat(cfg.ImageStoreDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("image store %s does not exist", cfg.ImageStoreDir)
+	} else {
+		// Ensuring folder structure
+		progressDir = path.Join(cfg.ImageStoreDir, "inprogress")
+		requestDir = path.Join(cfg.ImageStoreDir, "request")
+		copyDir = path.Join(cfg.ImageStoreDir, "copy")
+		extractDir = path.Join(cfg.ImageStoreDir, "extract")
+
+		dirs := [4]string{
+			progressDir,
+			requestDir,
+			copyDir,
+			extractDir,
+		}
+		for _, dir := range dirs {
+			if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+				return nil, fmt.Errorf("creating dir %s failed %s", dir, err.Error())
+			}
+		}
+	}
+
 	glog.Infof("Driver: %v ", cfg.DriverName)
 	glog.Infof("Version: %s", cfg.VendorVersion)
+	glog.Infof("ImageStoreDir: %s ", cfg.ImageStoreDir)
+	glog.Infof("MaxPublishDuration: %s", cfg.MaxPublishDuration)
 
 	ie := &ImageExtractor{
 		config: cfg,

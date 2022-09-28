@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/sapcc/csi-driver-image-extractor/pkg/image"
 )
@@ -41,6 +42,8 @@ func main() {
 	flag.StringVar(&cfg.Endpoint, "endpoint", "unix://tmp/csi.sock", "CSI endpoint")
 	flag.StringVar(&cfg.DriverName, "drivername", "image.csi.cnmp.sap", "name of the driver")
 	flag.StringVar(&cfg.NodeID, "nodeid", "", "node id")
+	flag.StringVar(&cfg.ImageStoreDir, "imagestoredir", "", "image store directory")
+	flag.DurationVar(&cfg.MaxPublishDuration, "maxpublishduration", 3*time.Hour, "maximum time to wait ")
 
 	flag.Parse()
 

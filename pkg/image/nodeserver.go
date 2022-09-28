@@ -33,18 +33,6 @@ import (
 	manifest "github.com/containers/image/v5/manifest"
 )
 
-const (
-	imageStore = "/image-storage" // TODO make this configurable
-)
-
-var (
-	progressDir     = path.Join(imageStore, "inprogress")
-	requestDir      = path.Join(imageStore, "request")
-	copyDir         = path.Join(imageStore, "copy")
-	extractDir      = path.Join(imageStore, "extract")
-	maxPullDuration = 3 * time.Hour
-)
-
 func (ie *ImageExtractor) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
 	caps := []*csi.NodeServiceCapability{
 		{
@@ -226,25 +214,20 @@ func (ie ImageExtractor) extractImage(image *ContainerImage) {
 }
 
 func (ie *ImageExtractor) setupVolume(volumeId string, image *ContainerImage) error {
-	if _, err := os.Stat(imageStore); !os.IsNotExist(err) {
-		image.recordImageRequest()
-		if isPullInProgress, since := image.isPullInProgress(); isPullInProgress {
-			msg := fmt.Sprintf("image %s is beeing processed since %s", image.Name, since.Format(time.RFC3339Nano))
-			glog.V(4).Infof("%s\n", msg)
-			if time.Since(since) > maxPullDuration {
-				image.cleanup()
-			}
-			return fmt.Errorf("%s", msg)
-		} else if !image.isExtracted() {
-			go ie.extractImage(image)
-			return fmt.Errorf("image pull %s started", image.Name)
-		} else {
-			glog.V(4).Infof("image %s already pulled\n", image.Name)
-			return nil
+	image.recordImageRequest()
+	if isPullInProgress, since := image.isPullInProgress(); isPullInProgress {
+		msg := fmt.Sprintf("image %s is beeing processed since %s", image.Name, since.Format(time.RFC3339Nano))
+		glog.V(4).Infof("%s\n", msg)
+		if time.Since(since) > ie.config.MaxPublishDuration {
+			image.cleanup()
 		}
+		return fmt.Errorf("%s", msg)
+	} else if !image.isExtracted() {
+		go ie.extractImage(image)
+		return fmt.Errorf("image pull %s started", image.Name)
 	} else {
-		// TODO Check this already in startup
-		return fmt.Errorf("image store unavailable")
+		glog.V(4).Infof("image %s already pulled\n", image.Name)
+		return nil
 	}
 }
 
