@@ -4,7 +4,7 @@ CSI driver that uses a container image as transport medium for content, which sh
 
 ## How it works:
 
-This driver was inspired by https://github.com/kubernetes-csi/csi-driver-image-populator, but with tougher requirements regarding container image sizes.
+This driver was inspired by https://github.com/kubernetes-csi/csi-driver-image-populator, but with tougher requirements regarding container image sizes. To update the driver to recent `csi` specification it was inspired by https://github.com/kubernetes-csi/csi-driver-host-path.
 
 It uses a PersitentVolume as the destination for a copy of the the container image and extracts it's layers there. The extracted content will be provided to the Pod as VolumeMount.
 If one uses a multi-node attachable `RWX` PersitentVolume (nfs) the following advantages are given:

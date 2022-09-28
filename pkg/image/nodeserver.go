@@ -19,24 +19,21 @@ package image
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"time"
 
 	"github.com/golang/glog"
 	"golang.org/x/net/context"
+	"k8s.io/mount-utils"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"k8s.io/kubernetes/pkg/util/mount"
 
 	manifest "github.com/containers/image/v5/manifest"
-	csicommon "github.com/kubernetes-csi/drivers/pkg/csi-common"
 )
 
 const (
-	deviceID   = "deviceID"
 	imageStore = "/image-storage" // TODO make this configurable
 )
 
@@ -48,13 +45,33 @@ var (
 	maxPullDuration = 3 * time.Hour
 )
 
-type nodeServer struct {
-	*csicommon.DefaultNodeServer
-	Timeout  time.Duration
-	execPath string
+func (ie *ImageExtractor) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
+	caps := []*csi.NodeServiceCapability{
+		{
+			Type: &csi.NodeServiceCapability_Rpc{
+				Rpc: &csi.NodeServiceCapability_RPC{
+					Type: csi.NodeServiceCapability_RPC_UNKNOWN,
+				},
+			},
+		},
+	}
+
+	return &csi.NodeGetCapabilitiesResponse{Capabilities: caps}, nil
 }
 
-func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+func (ie *ImageExtractor) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
+	resp := &csi.NodeGetInfoResponse{
+		NodeId: ie.config.NodeID,
+	}
+
+	return resp, nil
+}
+
+func (ie *ImageExtractor) NodeGetVolumeStats(ctx context.Context, in *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
+	return &csi.NodeGetVolumeStatsResponse{}, nil
+}
+
+func (ie *ImageExtractor) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	// Check arguments
 	if req.GetVolumeCapability() == nil {
 		return nil, status.Error(codes.InvalidArgument, "Volume capability missing in request")
@@ -69,7 +86,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	image := req.GetVolumeContext()["image"]
 	containerImage := NewContainerImage(image)
 
-	err := ns.setupVolume(req.GetVolumeId(), containerImage)
+	err := ie.setupVolume(req.GetVolumeId(), containerImage)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +137,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
-func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+func (ie *ImageExtractor) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	// Check arguments
 	if len(req.GetVolumeId()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
@@ -145,14 +162,14 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 	}
 	glog.V(4).Infof("image: volume %s/%s has been unmounted.", targetPath, volumeId)
 
-	err = ns.unsetupVolume(volumeId)
+	err = ie.unsetupVolume(volumeId)
 	if err != nil {
 		return nil, err
 	}
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-func (ns *nodeServer) extractImage(image *ContainerImage) {
+func (ie ImageExtractor) extractImage(image *ContainerImage) {
 	if err := os.MkdirAll(progressDir, os.ModePerm); err != nil {
 		glog.V(4).Infof("creating dir %s failed %s\n", progressDir, err.Error())
 		return
@@ -171,8 +188,7 @@ func (ns *nodeServer) extractImage(image *ContainerImage) {
 	destination := fmt.Sprintf("dir:%s", copyDir)
 	args := []string{"copy", source, destination}
 	// TODO Check whether we can use github.com/containers/image/v5 for that
-	ns.execPath = "/bin/skopeo" // FIXME
-	_, err := ns.runCmd(args)
+	_, err := runCmd("/bin/skopeo", args) // FIXME
 	if err != nil {
 		glog.V(4).Infof("copy image %s failed %s\n", image.Name, err.Error())
 		return
@@ -209,7 +225,7 @@ func (ns *nodeServer) extractImage(image *ContainerImage) {
 	os.Remove(image.getLockFileName())
 }
 
-func (ns *nodeServer) setupVolume(volumeId string, image *ContainerImage) error {
+func (ie *ImageExtractor) setupVolume(volumeId string, image *ContainerImage) error {
 	if _, err := os.Stat(imageStore); !os.IsNotExist(err) {
 		image.recordImageRequest()
 		if isPullInProgress, since := image.isPullInProgress(); isPullInProgress {
@@ -220,7 +236,7 @@ func (ns *nodeServer) setupVolume(volumeId string, image *ContainerImage) error 
 			}
 			return fmt.Errorf("%s", msg)
 		} else if !image.isExtracted() {
-			go ns.extractImage(image)
+			go ie.extractImage(image)
 			return fmt.Errorf("image pull %s started", image.Name)
 		} else {
 			glog.V(4).Infof("image %s already pulled\n", image.Name)
@@ -232,22 +248,19 @@ func (ns *nodeServer) setupVolume(volumeId string, image *ContainerImage) error 
 	}
 }
 
-func (ns *nodeServer) unsetupVolume(volumeId string) error {
+func (ie *ImageExtractor) unsetupVolume(volumeId string) error {
 	// TODO Consider a setting to cleanup local directory
 	return nil
 }
 
-func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+func (ie *ImageExtractor) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
-func (ns *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+func (ie *ImageExtractor) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-func (ns *nodeServer) runCmd(args []string) ([]byte, error) {
-	execPath := ns.execPath
-	cmd := exec.Command(execPath, args...)
-
-	return cmd.CombinedOutput()
+func (ie *ImageExtractor) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
+	return &csi.NodeExpandVolumeResponse{}, nil
 }

@@ -17,9 +17,44 @@ limitations under the License.
 package image
 
 import (
-	"github.com/kubernetes-csi/drivers/pkg/csi-common"
+	"github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/golang/glog"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-type identityServer struct {
-	*csicommon.DefaultIdentityServer
+func (ie *ImageExtractor) GetPluginInfo(ctx context.Context, req *csi.GetPluginInfoRequest) (*csi.GetPluginInfoResponse, error) {
+	glog.V(5).Infof("Using default GetPluginInfo")
+
+	if ie.config.DriverName == "" {
+		return nil, status.Error(codes.Unavailable, "Driver name not configured")
+	}
+
+	if ie.config.VendorVersion == "" {
+		return nil, status.Error(codes.Unavailable, "Driver is missing version")
+	}
+
+	return &csi.GetPluginInfoResponse{
+		Name:          ie.config.DriverName,
+		VendorVersion: ie.config.VendorVersion,
+	}, nil
+}
+
+func (ie *ImageExtractor) Probe(ctx context.Context, req *csi.ProbeRequest) (*csi.ProbeResponse, error) {
+	return &csi.ProbeResponse{}, nil
+}
+
+func (ie *ImageExtractor) GetPluginCapabilities(ctx context.Context, req *csi.GetPluginCapabilitiesRequest) (*csi.GetPluginCapabilitiesResponse, error) {
+	glog.V(5).Infof("Using default capabilities")
+	caps := []*csi.PluginCapability{
+		{
+			Type: &csi.PluginCapability_Service_{
+				Service: &csi.PluginCapability_Service{
+					Type: csi.PluginCapability_Service_CONTROLLER_SERVICE,
+				},
+			},
+		},
+	}
+	return &csi.GetPluginCapabilitiesResponse{Capabilities: caps}, nil
 }

@@ -1,6 +1,4 @@
 /*
-Copyright 2017 The Kubernetes Authors.
-
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -17,63 +15,50 @@ limitations under the License.
 package image
 
 import (
-	"github.com/container-storage-interface/spec/lib/go/csi"
+	"errors"
+
 	"github.com/golang/glog"
-
-	"github.com/kubernetes-csi/drivers/pkg/csi-common"
 )
 
-type driver struct {
-	csiDriver *csicommon.CSIDriver
-	endpoint  string
-
-	ids *csicommon.DefaultIdentityServer
-	ns  *nodeServer
-
-	cap   []*csi.VolumeCapability_AccessMode
-	cscap []*csi.ControllerServiceCapability
+type ImageExtractor struct {
+	config Config
 }
 
-var (
-	version = "0.0.1"
-)
-
-func NewDriver(driverName, nodeID, endpoint string) *driver {
-	glog.Infof("Driver: %v version: %v", driverName, version)
-
-	d := &driver{}
-
-	d.endpoint = endpoint
-
-	csiDriver := csicommon.NewCSIDriver(driverName, version, nodeID)
-	csiDriver.AddVolumeCapabilityAccessModes([]csi.VolumeCapability_AccessMode_Mode{csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER})
-	// image plugin does not support ControllerServiceCapability now.
-	// If support is added, it should set to appropriate
-	// ControllerServiceCapability RPC types.
-	csiDriver.AddControllerServiceCapabilities([]csi.ControllerServiceCapability_RPC_Type{csi.ControllerServiceCapability_RPC_UNKNOWN})
-
-	d.csiDriver = csiDriver
-
-	return d
+type Config struct {
+	DriverName    string
+	Endpoint      string
+	NodeID        string
+	VendorVersion string
 }
 
-func NewNodeServer(d *driver) *nodeServer {
-	return &nodeServer{
-		DefaultNodeServer: csicommon.NewDefaultNodeServer(d.csiDriver),
+func NewImageExtractor(cfg Config) (*ImageExtractor, error) {
+	if cfg.DriverName == "" {
+		return nil, errors.New("no driver name provided")
 	}
-}
 
-func NewControllerServer(d *csicommon.CSIDriver) *controllerServer {
-	return &controllerServer{
-		DefaultControllerServer: csicommon.NewDefaultControllerServer(d),
+	if cfg.Endpoint == "" {
+		return nil, errors.New("no driver endpoint provided")
 	}
+
+	if cfg.NodeID == "" {
+		return nil, errors.New("no node id provided")
+	}
+
+	glog.Infof("Driver: %v ", cfg.DriverName)
+	glog.Infof("Version: %s", cfg.VendorVersion)
+
+	ie := &ImageExtractor{
+		config: cfg,
+	}
+
+	return ie, nil
 }
 
-func (d *driver) Run() {
-	s := csicommon.NewNonBlockingGRPCServer()
-	s.Start(d.endpoint,
-		csicommon.NewDefaultIdentityServer(d.csiDriver),
-		NewControllerServer(d.csiDriver),
-		NewNodeServer(d))
+func (ie *ImageExtractor) Run() error {
+	s := NewNonBlockingGRPCServer()
+	// ImageExtractor itself implements ControllerServer, NodeServer, and IdentityServer.
+	s.Start(ie.config.Endpoint, ie, ie, ie)
 	s.Wait()
+
+	return nil
 }
