@@ -19,7 +19,6 @@ import (
 	"compress/gzip"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -148,10 +147,4 @@ func extractTarGz(tarball, target string) error {
 		}
 	}
 	return nil
-}
-
-func runCmd(execPath string, args []string) ([]byte, error) {
-	cmd := exec.Command(execPath, args...)
-
-	return cmd.CombinedOutput()
 }

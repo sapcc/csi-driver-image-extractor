@@ -19,6 +19,7 @@ package image
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"time"
 
@@ -177,17 +178,17 @@ func (ie ImageExtractor) extractImage(image *ContainerImage) {
 	args := []string{"copy"}
 	authFile := os.Getenv("REGISTRY_AUTH_FILE")
 	if authFile != "" {
-		authFile := fmt.Sprintf("--authfile %s", authFile)
-		args = append(args, authFile)
+		args = append(args, "--authfile", authFile)
 	}
 	args = append(args, source, destination)
 	// TODO Check whether we can use github.com/containers/image/v5 for that
-	stdoutStderr, err := runCmd("/bin/skopeo", args) // FIXME
+	cmd := exec.Command("/bin/skopeo", args...)
+	stdoutStderr, err := cmd.CombinedOutput()
+	glog.V(4).Infof("skopeo copy image %s: %s\n", image.Name, stdoutStderr)
 	if err != nil {
 		glog.V(4).Infof("copy image %s failed %s\n", image.Name, err.Error())
 		return
 	}
-	glog.V(4).Infof("copy image %s: %s\n", image.Name, stdoutStderr)
 
 	extractDir := image.getExtractDestination()
 	glog.V(4).Infof("Extract %s to %s\n", image.Name, extractDir)
