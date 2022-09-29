@@ -17,8 +17,11 @@ package image
 import (
 	"archive/tar"
 	"compress/gzip"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -28,13 +31,19 @@ import (
 )
 
 type ContainerImage struct {
-	Name string
+	Name   string
+	Digest string
 }
 
-func NewContainerImage(image string) *ContainerImage {
-	return &ContainerImage{
-		Name: image,
+func NewContainerImage(image string) (*ContainerImage, error) {
+	digest, err := getImageDigest(image)
+	if err != nil {
+		return nil, err
 	}
+	return &ContainerImage{
+		Name:   image,
+		Digest: digest,
+	}, nil
 }
 
 func (image ContainerImage) isExtracted() bool {
@@ -84,14 +93,52 @@ func (image ContainerImage) getCopyDestination() string {
 }
 
 func (image ContainerImage) getExtractDestination() string {
-	return path.Join(extractDir, image.Name)
+	return path.Join(extractDir, image.Digest)
+}
+
+func (image ContainerImage) getDigestDestination() string {
+	return path.Join(digestDir, image.Name)
 }
 
 func (image ContainerImage) cleanup() {
-	// TODO remove lockfile, download, extract
 	os.Remove(image.getLockFileName())
 	os.RemoveAll(image.getCopyDestination())
 	os.RemoveAll(image.getExtractDestination())
+}
+
+func getImageDigest(image string) (string, error) {
+	source := fmt.Sprintf("docker://%s", image)
+	args := []string{"inspect"}
+	authFile := os.Getenv("REGISTRY_AUTH_FILE")
+	if authFile != "" {
+		args = append(args, "--authfile", authFile)
+	}
+	args = append(args, source)
+	// TODO Check whether we can use github.com/containers/image/v5 for that
+	cmd := exec.Command("/bin/skopeo", args...)
+	stdoutStderr, err := cmd.CombinedOutput()
+	glog.V(6).Infof("skopeo inspect image %s: %s\n", image, stdoutStderr)
+	if err != nil {
+		glog.V(4).Infof("skopeo inspect %s failed %s\n", image, err.Error())
+		return "", err
+	} else {
+		type Inspect struct {
+			Digest string
+		}
+		var inspect Inspect
+		err := json.Unmarshal([]byte(stdoutStderr), &inspect)
+		if err != nil {
+			glog.V(4).Infof("unmarshal inspect for %s failed %s\n", image, err.Error())
+			return "", err
+		}
+		// Digest "sha256:790b52558236313f0939403be37e5e5e7c767602975ba3f740ad887a3e28f1ed"
+		// extract the last part
+		idx := strings.Index(inspect.Digest, ":")
+		if idx < 0 {
+			return "", fmt.Errorf("digest %s malformed", inspect.Digest)
+		}
+		return inspect.Digest[idx+1:], nil
+	}
 }
 
 func touchFile(fileName string, updateTimes bool) error {

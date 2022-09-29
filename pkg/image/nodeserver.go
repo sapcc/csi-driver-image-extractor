@@ -73,9 +73,12 @@ func (ie *ImageExtractor) NodePublishVolume(ctx context.Context, req *csi.NodePu
 	}
 
 	image := req.GetVolumeContext()["image"]
-	containerImage := NewContainerImage(image)
+	containerImage, err := NewContainerImage(image)
+	if err != nil {
+		return nil, err
+	}
 
-	err := ie.setupVolume(req.GetVolumeId(), containerImage)
+	err = ie.setupVolume(req.GetVolumeId(), containerImage)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +201,13 @@ func (ie ImageExtractor) extractImage(image *ContainerImage) {
 		glog.V(4).Infof("creating dir %s failed %s\n", extractDir, err.Error())
 		return
 	}
+
+	digestDir := image.getDigestDestination()
+	if err := os.MkdirAll(digestDir, os.ModePerm); err != nil {
+		glog.V(4).Infof("creating dir %s failed %s\n", digestDir, err.Error())
+		return
+	}
+	os.Symlink(extractDir, path.Join(digestDir, image.Digest))
 
 	manifestFile, err := os.ReadFile(path.Join(copyDir, "manifest.json"))
 	if err != nil {

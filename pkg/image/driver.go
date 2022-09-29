@@ -42,6 +42,7 @@ var (
 	requestDir  string
 	copyDir     string
 	extractDir  string
+	digestDir   string
 )
 
 func NewImageExtractor(cfg Config) (*ImageExtractor, error) {
@@ -73,12 +74,14 @@ func NewImageExtractor(cfg Config) (*ImageExtractor, error) {
 		requestDir = path.Join(cfg.ImageStoreDir, "request")
 		copyDir = path.Join(cfg.ImageStoreDir, "copy")
 		extractDir = path.Join(cfg.ImageStoreDir, "extract")
+		digestDir = path.Join(cfg.ImageStoreDir, "digest")
 
-		dirs := [4]string{
+		dirs := [5]string{
 			progressDir,
 			requestDir,
 			copyDir,
 			extractDir,
+			digestDir,
 		}
 		for _, dir := range dirs {
 			if err := os.MkdirAll(dir, os.ModePerm); err != nil {
