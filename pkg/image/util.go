@@ -142,7 +142,7 @@ func extractTarGz(tarball, target string) error {
 				return err
 			}
 
-		case tar.TypeLink:
+		case tar.TypeLink, 50:
 			if err := os.Symlink(header.Linkname, path); err != nil {
 				return err
 			}
