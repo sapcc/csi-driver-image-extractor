@@ -17,13 +17,14 @@ package image
 import (
 	"archive/tar"
 	"compress/gzip"
-	"fmt"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/golang/glog"
 )
 
 type ContainerImage struct {
@@ -158,7 +159,8 @@ func extractTarGz(tarball, target string) error {
 			}
 
 		default:
-			return fmt.Errorf("unhandled tar header type %d", header.Typeflag)
+			glog.V(4).Infof("unhandled tar header type %d for %s\n", header.Typeflag, header.Name)
+			continue
 		}
 	}
 	return nil
