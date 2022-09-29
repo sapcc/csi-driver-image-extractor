@@ -36,6 +36,10 @@ func NewContainerImage(image string) *ContainerImage {
 }
 
 func (image ContainerImage) isExtracted() bool {
+	//TODO Check digest for updates
+	if inProgess, _ := image.isPullInProgress(); !inProgess {
+		return false
+	}
 	if _, err := os.Stat(image.getExtractDestination()); os.IsNotExist(err) {
 		return false
 	}

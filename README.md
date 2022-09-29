@@ -13,6 +13,8 @@ If one uses a multi-node attachable `RWX` PersitentVolume (nfs) the following ad
 
 Processing large container images will exceed the normal processing times one would expected for provisioning a volume. `csi-driver-image-extractor` has built-in measures to ensure pulling the same image happens only once and the Kubernetes retry mechanism will catch up after the container image is consumable.
 
+The mounted volume from the container image is read-only to ensure consistency across mounts.
+
 ## Usage:
 
 **This is a prototype driver. Do not use for production**

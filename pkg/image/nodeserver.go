@@ -104,7 +104,8 @@ func (ie *ImageExtractor) NodePublishVolume(ctx context.Context, req *csi.NodePu
 		deviceId = req.GetPublishContext()[deviceID]
 	}
 
-	readOnly := req.GetReadonly()
+	//Currently we can only ensure the consistency of the share when mounted read-only
+	readOnly := true //req.GetReadonly()
 	volumeId := req.GetVolumeId()
 	attrib := req.GetVolumeContext()
 	mountFlags := req.GetVolumeCapability().GetMount().GetMountFlags()
@@ -187,6 +188,7 @@ func (ie ImageExtractor) extractImage(image *ContainerImage) {
 	glog.V(4).Infof("skopeo copy image %s: %s\n", image.Name, stdoutStderr)
 	if err != nil {
 		glog.V(4).Infof("copy image %s failed %s\n", image.Name, err.Error())
+		//TODO Cleanup
 		return
 	}
 
@@ -218,6 +220,7 @@ func (ie ImageExtractor) extractImage(image *ContainerImage) {
 	}
 
 	glog.V(4).Infof(" %s ready for consumption\n", image.Name)
+	//TODO Cleanup /copy
 	os.Remove(image.getLockFileName())
 }
 
