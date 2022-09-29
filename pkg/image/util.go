@@ -17,6 +17,7 @@ package image
 import (
 	"archive/tar"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -133,21 +134,31 @@ func extractTarGz(tarball, target string) error {
 
 		path := filepath.Join(target, header.Name)
 		info := header.FileInfo()
-		if info.IsDir() {
+
+		switch header.Typeflag {
+		case tar.TypeDir:
 			if err = os.MkdirAll(path, info.Mode()); err != nil {
 				return err
 			}
-			continue
-		}
 
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		_, err = io.Copy(file, tarReader)
-		if err != nil {
-			return err
+		case tar.TypeLink:
+			if err := os.Symlink(header.Linkname, path); err != nil {
+				return err
+			}
+
+		case tar.TypeReg, tar.TypeRegA:
+			file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			_, err = io.Copy(file, tarReader)
+			if err != nil {
+				return err
+			}
+
+		default:
+			return fmt.Errorf("unhandled tar header type %d", header.Typeflag)
 		}
 	}
 	return nil
