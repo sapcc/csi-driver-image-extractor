@@ -229,9 +229,11 @@ func (ie ImageExtractor) extractImage(image *ContainerImage) {
 
 	}
 
-	glog.V(4).Infof(" %s ready for consumption\n", image.Name)
-	//TODO Cleanup /copy
+	// Cleaning up
+	os.RemoveAll(image.getCopyDestination())
 	os.Remove(image.getLockFileName())
+
+	glog.V(4).Infof("%s ready for consumption\n", image.Name)
 }
 
 func (ie *ImageExtractor) setupVolume(volumeId string, image *ContainerImage) error {
